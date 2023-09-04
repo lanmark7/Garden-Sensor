@@ -1,0 +1,17 @@
+esphome:
+  platformio_options:
+    board_build.flash_mode: dio
+
+esp32:
+  board: seeed_xiao_esp32c3
+  variant: esp32c3
+  framework:
+    type: arduino
+    version: 2.0.9
+    platform_version: 6.3.2
+
+i2c:
+  - id: bus_a
+    sda: 6
+    scl: 7
+    scan: true

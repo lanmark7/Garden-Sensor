@@ -1,0 +1,155 @@
+substitutions:
+  device_id: garden
+  device_name: Garden
+
+packages:
+  common: !include .common.yaml
+  xiao: !include .common-xiao-esp32c3.yaml
+
+esphome:  
+  on_boot:
+    priority: 600    
+    then:
+      - light.turn_on: 
+          id: led_status
+          effect: "StatusError"                 
+
+globals:
+  - id: is_error
+    type: bool
+    restore_value: no
+    initial_value: 'true'
+
+  - id: is_connected
+    type: bool
+    restore_value: no
+    initial_value: 'false'
+
+# Example configuration entry
+sensor:
+  - platform: sht3xd    
+    temperature:
+      id: outside_temp
+      name: ${device_name} Temperature
+    humidity:
+      id: outside_humidity
+      name: ${device_name} Humidity      
+    address: 0x44
+    update_interval: 30s
+
+  - platform: bme280
+    temperature:
+      id: internal_temp      
+      name: ${device_name} Internal Temperature
+      oversampling: 16x
+    pressure:
+      id: internal_pressure
+      name: ${device_name} Internal Pressure          
+    humidity:      
+      id: internal_humidity  
+      name: ${device_name} Internal Humidity          
+    address: 0x76
+    update_interval: 30s
+
+  - platform: adc    
+    id: battery_voltage    
+    name: ${device_name} Battery Volts
+    unit_of_measurement: "v"
+    pin: GPIO2
+    accuracy_decimals: 2
+    update_interval: 2s
+    attenuation: 11db
+    filters:
+      - multiply: 6.10
+      #use moving median to smooth spikes
+      - median:
+          window_size: 15
+          send_every: 15
+          send_first_at: 15
+      # - delta: 0.1    # Only send values to HA if they change 
+      # - throttle: 15s # Limit values sent to Ha
+
+  # Convert the Voltage to a battery  level (%)
+  - platform: copy
+    id: battery_level
+    name: ${device_name} Battery Level
+    source_id: battery_voltage    
+    icon: "mdi:battery"
+    unit_of_measurement: '%'
+    accuracy_decimals: 1
+    filters:      
+      # Map from voltage to Battery level
+      - calibrate_linear:      
+          - 11.9 -> 0          
+          - 12.7 -> 100
+      #Handle/cap boundaries
+      - lambda: |
+          if (x < 0) return 0; 
+          else if (x > 100) return 100;
+          else return (x);
+      # - delta: 0.5 #Only send values to HA if they change 
+      - throttle: 15s #Limit values sent to Ha
+
+light:  
+  - platform: neopixelbus
+    id: led_status
+    name: ${device_name} LED Status
+    type: GRB
+    variant: WS2811
+    pin: GPIO3
+    num_leds: 1
+    effects:
+      - strobe:
+          name: StatusOk
+          colors:
+            - state: true              
+              duration: 150ms
+              brightness: 30%
+              red: 0%
+              green: 0%
+              blue: 100% 
+            - state: false
+              duration: 2500ms
+      - strobe:
+          name: StatusError
+          colors:
+            - state: true              
+              duration: 250ms
+              brightness: 100%
+              red: 100%
+              green: 0%
+              blue: 0% 
+            - state: false
+              duration: 1500ms            
+
+interval:
+  - interval: 2s
+    then:
+      if:
+        condition:
+          api.connected:
+        then:
+          - lambda:  'id(is_connected) = true;'
+        else:
+          - lambda: 'id(is_connected) = false;'
+  - interval: 2s
+    then:     
+      - lambda: |- 
+          bool isError = false;
+
+          if(!id(is_connected)) {
+            isError = true;
+          }
+
+          if(id(is_error) != isError) {
+            auto led = id(led_status).make_call();
+            
+            if(isError) {
+              led.set_effect("StatusError");
+            } else {
+              led.set_effect("StatusOk");
+            }
+            led.perform();
+            
+            id(is_error) = isError;
+          }  
